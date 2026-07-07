@@ -1,0 +1,1 @@
+# Calculadora-Cientifica-Casio-fx-82ES
