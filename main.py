@@ -63,6 +63,9 @@ def para_python(expr: str) -> str:
     expr = expr.replace("cos⁻¹(", "cos_inv(")
     expr = expr.replace("tan⁻¹(", "tan_inv(")
 
+    # ² deve ser substituído ANTES de limpar_expr, pois _RSUP converte ² → 2
+    expr = expr.replace("²", "**2")
+
     expr = limpar_expr(expr)
 
     # Multiplicação implícita: 2π → 2*π, 2( → 2*(, )2 → )*2
@@ -74,11 +77,37 @@ def para_python(expr: str) -> str:
 
     for antigo, novo in [
     ("log(",   "math.log10("), ("ln(",    "math.log("), ("√(",  "math.sqrt("),
-    ("π",      "math.pi"),    ("^",       "**"),         ("²",  "**2"),
+    ("π",      "math.pi"),    ("^",       "**"),
     ("÷",      "/"),          ("×",       "*"),           ("−", "-"),
-    ("%",      "/100"),
     ]:
         expr = expr.replace(antigo, novo)
+
+    # % contextual: X+Y% → X+X*Y/100 | X-Y% → X-X*Y/100 | X*%N → X*N/100 | N% → N/100
+    if "%" in expr:
+        pct = expr.index("%")
+        antes = expr[:pct]
+        depois = expr[pct + 1:]
+        # Padrão %× (ex: 50%*200): número antes do %, operador depois
+        if depois and depois[0] in "*/":
+            expr = antes + "/100" + depois
+        # Padrão ×% (ex: 200*%50): operador antes do %, número depois
+        elif antes and antes[-1] in "*/" and depois:
+            expr = antes + depois + "/100"
+        else:
+            depth, op_idx, op_ch = 0, -1, ""
+            for i in range(len(antes) - 1, -1, -1):
+                ch = antes[i]
+                if ch == ")": depth += 1
+                elif ch == "(": depth -= 1
+                elif ch in "+-" and depth == 0 and i > 0:
+                    op_idx, op_ch = i, ch
+                    break
+            if op_idx > 0:
+                base = antes[:op_idx]
+                num  = antes[op_idx + 1:]
+                expr = f"{base}{op_ch}({base})*{num}/100{depois}"
+            else:
+                expr = f"{antes}/100{depois}"
 
     # `e` e `pi` soltos que não sejam math.e / math.pi
     expr = re.sub(r"(?<!math\.)\bpi\b", "math.pi", expr)
@@ -156,6 +185,20 @@ class Calculadora:
         else:
             self.expr += func
         self._atualizar()
+
+    def elevar_quadrado(self):
+        """Insere ² e calcula imediatamente."""
+        self.inserir("²")
+        self.calcular()
+
+    def inserir_percentual(self):
+        """Insere %× se o display termina com dígito ou ), caso contrário apenas %."""
+        ultimo = self.expr[-1] if self.expr and not self.mostrando else ""
+        if ultimo.isdigit() or ultimo == ")":
+            self.expr += "%×"
+            self._atualizar()
+        else:
+            self.inserir("%")
 
     # ── Ações especiais ───────────────────────────────────────────────────────
     def limpar(self):
@@ -332,7 +375,7 @@ class Calculadora:
             ("√",      2,2,1,"scientific", lambda: self.inserir_func("√(")),
             ("π",      3,0,1,"scientific", lambda: self.inserir("π")),
             ("e",      3,1,1,"scientific", lambda: self.inserir("e")),
-            ("x²",     3,2,1,"scientific", lambda: self.inserir("²")),
+            ("x²",     3,2,1,"scientific", self.elevar_quadrado),
             ("( )",    4,0,2,"scientific", self.parentese),
             ("xʸ",     4,2,1,"scientific", lambda: self.inserir("^")),
             # Função — col 3-6, linha 0
@@ -354,7 +397,7 @@ class Calculadora:
             ("+",      3,6,1,"operator",   lambda: self.inserir("+")),
             ("0",      4,3,1,"number",     lambda: self.inserir("0")),
             (".",      4,4,1,"number",     lambda: self.inserir(".")),
-            ("%",      4,5,1,"number",     lambda: self.inserir("%")),
+            ("%",      4,5,1,"number",     self.inserir_percentual),
             ("=",      4,6,1,"operator",   self.calcular),
         ]
 
